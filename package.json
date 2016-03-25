@@ -1,0 +1,20 @@
+{
+  "name": "twitch-logger",
+  "version": "0.0.0",
+  "description": "simple twitch channel logging",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "twitch",
+    "irc",
+    "log",
+    "logger"
+  ],
+  "author": "talmobi <talmo.christian@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "rethinkdb": "^2.2.2"
+  }
+}
