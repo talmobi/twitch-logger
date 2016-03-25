@@ -16,5 +16,10 @@
   "license": "MIT",
   "dependencies": {
     "rethinkdb": "^2.2.2"
+  },
+  "repository": {
+    {"type": "git",
+      "url": "https://github.com/talmobi/twitch-logger.git"
+    }
   }
 }
