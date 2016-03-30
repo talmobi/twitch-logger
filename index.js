@@ -75,7 +75,9 @@ r.connect({ host: 'localhost', port: 28015 }, function (err, conn) {
   client.on('end', function () {
     // exit (and let pm2/forever restart for a reconnection )
     console.log("disconnected from %s", auth.host);
-    process.exit(1); // exit failure
+	setTimeout(function () {
+		process.exit(1); // exit failure, let pm2 restart
+	}, 5000);
   });
 
   /*
