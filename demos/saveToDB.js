@@ -60,6 +60,8 @@ tl.start(auth, function (err, doc) {
     created_at: Date.now()
   };*/
 
+  channels_active[doc.channel] = doc.channel;
+
   // save to rethinkdb
   r.db(db_name).table('messages').insert(doc).run(rethinkdb_connection, function (err, res) {
     if (err) {
@@ -97,9 +99,9 @@ function logger () {
   console.log("channels active: %s", Object.keys(channels_active));
   console.log("===============");
 
+  // clear 
   channels_active = {};
 
-  channels_active = [];
   LogTimer.update();
   setTimeout(logger, LogTimer.next);
 };
