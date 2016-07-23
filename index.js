@@ -146,7 +146,9 @@ function start (opts, callback) {
 
     // check optionals
     if (params[0] === ':') { // <trailing> found
+      // ignore it
     } else { // <middle> <params> found
+      // ignore it
     }
 
     // return a message object
