@@ -1,176 +1,222 @@
-var net = require('net');
-var parseIRCMessage = require('irc-message')
+var net = require('net') // connect to IRC server (TCP)
+var fs = require('fs')
+var parseIRCMessage = require('irc-message').parse
 
-function start (opts, callback) {
-  if (!opts || typeof opts !== 'object' || !opts.host || !opts.port ||
-      !opts.oauth || !opts.nick) {
-    return new Error("opts error. See: { host, port, channels, oauth, nick }" );;
+var dgram = require('dgram') // send and forget chat messages on local port
+                             // for local processes that want to listen for live events
+
+function log () {
+  if (process.env.SILENT || process.env.silent) return undefined
+  var _args = arguments
+  var args = Object.keys( _args ).map(function ( key ) {
+    return _args[key]
+  })
+  args[0] = '[twitch-logger]: ' + args[0]
+  // args[args.length - 1] = String(args[args.length - 1]).trim()
+  console.log.apply(this, args)
+}
+
+function start (opts) {
+  if (typeof opts === 'string') { // assume host string
+    opts = { host: opts }
+  }
+  if (!opts.host) {
+    throw new Error('No irc host specified (eg: irc.freenode.net)')
+  }
+
+  if (!opts.port) opts.port = 6667
+  if (!opts.nick) opts.nick = 'guest' + (Date.now()).toString(16).slice(5)
+
+  var _udpSocket
+  var _udpPort = process.env.UDP_PORT || 40400
+  var _udpAddress = process.env.UDP_ADDRESS || process.env.UDP_HOST || '127.0.0.1'
+  if (!process.env.DISABLE_UDP) {
+    _udpSocket = dgram.createSocket('udp4')
+  }
+
+  var _channels = []
+  var _channelsActiveAt = {}
+  var _connectedSuccessfully = false
+  var _reconnectionInterval = 1000 * 60
+
+  var _reconnectionTick = function () {
+    if (_connectedSuccessfully) {
+      fs.readFile('./channels.txt', function (err, data) {
+        setTimeout(_reconnectionTick, 1000)
+
+        if (!err && data) {
+          var now = Date.now()
+          var newChannels = data
+                              .toString('utf8')
+                              .trim()
+                              .split(/[\s,#]+/g)
+                              .filter(function (channel) {
+                                return channel.trim().length > 2
+                              })
+
+          newChannels.forEach(function (channel) {
+            var isActive = (
+              _channelsActiveAt[channel] &&
+              (now - _channelsActiveAt[channel]) < _reconnectionInterval
+            )
+            if (!isActive) {
+              _channelsActiveAt[channel] = now
+              var hashChannel = (channel[0] === '#') ? channel : ('#' + channel)
+              log(' -- joining channel: ' + hashChannel)
+              client.write('JOIN ' + hashChannel + '\n')
+            }
+          })
+
+          // part from channels no longer monitored
+          _channels.forEach(function (channel) {
+            if (newChannels.indexOf(channel) === -1) {
+              var hashChannel = (channel[0] === '#') ? channel : ('#' + channel)
+              log(' -- parting from channel: ' + hashChannel)
+              client.write('PART ' + hashChannel + '\n')
+            }
+          })
+
+          _channels = newChannels
+        }
+      })
+    }
   }
 
   // connect to twitch irc
-  var client = net.connect(opts);
+  log('connecting to ' + opts.host + ':' + opts.port)
+  var client = net.connect({
+    host: opts.host,
+    port: opts.port
+  })
 
   client.on('connect', function () {
-    console.log("connected to %s", opts.host);
+    log("connected to %s", opts.host)
 
-    // opts.nticate with twitch
-    console.log("sending twitch oauth.authentication...");
-    client.write("PASS " + opts.oauth + "\n");
-    client.write("NICK " + opts.nick + "\n");
-  });
+    // authenticate with twitch
+    log('authenticating with twitch using oauth...')
+    opts.pass && client.write('PASS ' + opts.pass + '\n')
+    opts.nick && client.write('NICK ' + opts.nick + '\n')
+  })
 
-  var dataCounter = 0;
-  var buffer = "";
-  var joined = false;
+  var dataCounter = 0
+  var buffer = ''
 
-  client.on('data', function (data) {
-    dataCounter++;
-    var str = data.toString('utf8');
+  client.on('data', function ( data ) {
+    dataCounter++
+    // log("received data.length: %s", data.toString('utf8').length)
 
-    //console.log("received data: %s", str);
+    // push to buffer
+    buffer += data.toString('utf8')
 
-    // split data into lines of text
-    buffer += str;
-    while (buffer.indexOf('\n') >= 0) {
-      var newLineIndex = buffer.indexOf('\n');
-
-      var line = buffer.substring(0, newLineIndex);
-      // rewind the buffer
-      buffer = buffer.substring(newLineIndex + 1);
-
-      // parse the message
-      var message = buildIRCMessage( line );
-      handleMessage(client, message);
-    }
-
-    if (!joined) {
-      joined = true;
-      console.log("joining channels..");
-
-      opts.channels.forEach(function (val, ind, arr) {
-        var channel = val[0] == '#' ? val : ('#' + val);
-        client.write("JOIN " + channel + "\n");
-      });
-    }
-  });
+    var lines = buffer.split('\n') // split into lines
+    buffer = lines.pop() // rewind buffer
+    lines.forEach(function (line) { // process complete lines
+      log("irc message: %s", line)
+      handleMessage(line)
+    })
+  })
 
   client.on('end', function () {
-    // exit (and let pm2/forever restart for a reconnection )
-    console.log("disconnected from %s", opts.host);
-    callback(new Error("disconnected from server - process exiting soon"), null);
-    setTimeout(function () {
-      stop();
-    }, 1000 * 30);
-  });
+    log("disconnected from %s", opts.host)
+  })
 
-  function handleMessage (client, msg) {
-    switch (msg.command.trim()) {
+  function handleMessage (line) {
+    var msg = parseIRCMessage(line)
+
+    var msgDoc = Object.assign({}, msg, { created_at: Date.now() })
+    emit('irc-message', msgDoc)
+
+    switch (msg.command) {
+      case '001': // welcome message
+        log('Connected Successfully.')
+        _connectedSuccessfully = true
+        setTimeout(function () {
+          _reconnectionTick()
+        }, 1000)
+        break
+
+      case 'JOIN':
+        var user = msg.prefix.split(/[!@]/g)[0]
+        if (user === opts.nick) {
+          log(' >> joined channel: ' + msg.params[0])
+        }
+        break
+
+      case 'PART':
+        if (user === opts.nick) {
+          log(' << parted channel: ' + msg.params[0])
+        }
+        break
+
       case 'PING':
-        client.write("PONG " + opts.host + "\n");
-        console.log("PONG!");
-        break;
-      case 'PRIVMSG':
-        var chatMessageIndexOf = msg.params.indexOf(':');
-        var channel = msg.params.slice(0, chatMessageIndexOf).trim();
-        var chatMessage = msg.params.slice(chatMessageIndexOf + 1).trim();
-        var user = msg.prefix.user.slice(1).trim();
+        client.write("PONG " + opts.host + "\n")
+        log("PONG")
+        break
 
-        // save to database
+      case 'PRIVMSG':
+        var channel = msg.params[0]
+        var message = String(msg.params[msg.params.length - 1]).trim()
+        var user = msg.prefix.split(/[!@]/g)[0]
+
+        // document format
         var doc = {
           channel: channel,
           user: user,
-          message: chatMessage,
+          message: message,
           created_at: Date.now()
-        };
+        }
 
-        callback(null, doc);
-        break;
-    };
-  };
+        _channelsActiveAt[doc.channel] = Date.now()
 
-  function buildIRCMessage (input) {
-    /** RFC 1459, 2.3.1
-     * <message>  ::= [':' <prefix> <SPACE> ] <command> <params> <crlf>
-     * <prefix>   ::= <servername> | <nick> [ '!' <user> ] [ '@' <host> ]
-     * <command>  ::= <letter> { <letter> } | <number> <number> <number>
-     * <SPACE>    ::= ' ' { ' ' }
-     * <params>   ::= <SPACE> [ ':' <trailing> | <middle> <params> ]
-     * <middle>   ::= <Any *non-empty* sequence of octets not including SPACE
-     *                or NUL or CR or LF, the first of which may not be ':'>
-     *                <trailing> ::= <Any, possibly *empty*, sequence of octets not including
-     *                                NUL or CR or LF>
-     *                                <crlf>     ::= CR LF
-     *                                */
+        // log(doc.channel + ' ' + doc.user + ': ' + doc.message)
+        emit('chat', doc)
+        break
 
-    var str = input.trim();
-
-    var prefix = null; // optional
-    var command = null; // required
-    var params = null; // required
-
-    //parse prefix
-    if (str[0] === ':') { // optional <prefix> found
-      var l = prefixString = str.slice(0, str.indexOf(' ')).trim();
-      var indexOfUser = l.indexOf('!');
-      var indexOfHost = l.indexOf('@');
-
-      var host = ''; // optional
-      if (~indexOfHost) {
-        host = l.slice( indexOfHost );
-        l = l.slice(0, -host.length);
-      }
-
-      var user = ''; // optional
-      if (~indexOfUser) {
-        user = l.slice( indexOfUser );
-        l = l.slice(0, -user.length);
-      }
-
-      var name = ''; // either <servername> or <nick>
-      name = l.slice(1);
-
-      prefix = {
-        name: name,
-        user: user,
-        host: host,
-        //data: prefixString
-      }
-
-      str = str.slice(prefixString.length); // cut out the prefix part
-    } // eof prefix parse
-
-    // str is now assumed to be without the prefix information
-    str = str.trim();
-    var indexOfParams = str.indexOf(' ');
-    var command = str.slice(0, indexOfParams).trim();
-    var params = str.slice(indexOfParams).trim();
-
-    // check optionals
-    if (params[0] === ':') { // <trailing> found
-      // ignore it
-    } else { // <middle> <params> found
-      // ignore it
+      default: // ignore
     }
-
-    // return a message object
-    return {
-      raw: input,
-        prefix: prefix,
-        command: command,
-        params: params
-    }
-  };
+  }
 
   function stop () {
-    callback(new Error("disconnected from server - process exiting"), null);
-    client.end();
-  };
+    _udpSocket && _udpSocket.close()
+    client.end()
+  }
 
-  return function () {
-    stop();
-  };
-};
+  var _listeners = {}
+  function emit (evt, data) {
+    _listeners[evt] &&  _listeners[evt].forEach(function (callback) {
+      callback(data)
+    })
+
+    try {
+      var packet = JSON.stringify({
+        evt: evt,
+        data: data
+      })
+      _udpSocket && _udpSocket.send(packet, _udpPort, _udpAddress, function (err) {
+        if (err) throw err
+        log(' >> >> udp packet sent of size: ' + packet.length)
+      })
+    } catch (err) {
+      throw err
+    }
+  }
+
+  function on (evt, callback) {
+    _listeners[evt] = _listeners[evt] || []
+    _listeners[evt].push(callback)
+
+    return function off () {
+      var i = _listeners[evt].indexOf(callback)
+      _listeners[evt].splice(i, 1)
+    }
+  }
+
+  return {
+    on,
+    stop
+  }
+}
 
 module.exports = {
   start: start
-};
+}
