@@ -1,8 +1,9 @@
 var net = require('net');
+var parseIRCMessage = require('irc-message')
 
 function start (opts, callback) {
   if (!opts || typeof opts !== 'object' || !opts.host || !opts.port ||
-      !opts.oauth || !opts.nick) {
+      !opts.oauth || !opts.nick) {
     return new Error("opts error. See: { host, port, channels, oauth, nick }" );;
   }
 

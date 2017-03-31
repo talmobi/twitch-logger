@@ -15,8 +15,9 @@
   "author": "talmobi <talmo.christian@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "rethinkdb": "^2.2.2",
-    "mongodb": "^2.1.14"
+    "irc-message": "^3.0.2",
+    "mongodb": "^2.1.14",
+    "rethinkdb": "^2.2.2"
   },
   "repository": {
     "type": "git",
