@@ -4,3 +4,6 @@ rethinkdb_data/
 *.swo
 *.swp
 *.DS_STORE
+
+# auth info
+auth.json
