@@ -53,6 +53,9 @@ function start (opts) {
                               .filter(function (channel) {
                                 return channel.trim().length > 2
                               })
+                              .map(function (channel) {
+                                return channel.trim().toLowerCase()
+                              })
 
           newChannels.forEach(function (channel) {
             var isActive = (
