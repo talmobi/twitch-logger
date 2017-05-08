@@ -27,15 +27,43 @@ MongoClient.connect(mongodb_url, function (err, mongodb) {
   var logger = tl.start(opts)
 
   logger.on('irc-message', function (doc) {
+    // skip if this collection is not int he collectionsToSave mapping
+    var channel = doc.channel || 'unknown'
+    if (channel[0] === '#') channel = channel.slice(1)
+    if (collectionsToSave.indexOf(channel.trim().toLowerCase()) === -1) return undefined
+
     saveDocument(mongodb, 'irc_messages', doc)
   })
 
   logger.on('chat', function (doc) {
+    // skip if this collection is not int he collectionsToSave mapping
     var channel = doc.channel || 'unknown'
     if (channel[0] === '#') channel = channel.slice(1)
+    if (collectionsToSave.indexOf(channel.trim().toLowerCase()) === -1) return undefined
+
     saveDocument(mongodb, 'channel_' + channel, doc)
   })
 })
+
+var collectionsToSave = [
+  'sirpinkleton00',
+  'strippin',
+  'dexbonus',
+  'netglow',
+  'sjow',
+  'sodapoppin',
+  'totalbiscuit',
+  'twitchpresents',
+  'twitch',
+  'twitchplayspokemon',
+  'dexteritybonus',
+  'dizzykitten',
+  'athenelive',
+  'bobross',
+  'cryaotic',
+  'esl_sc2',
+  'mcill'
+]
 
 var collectionBuffers = {}
 

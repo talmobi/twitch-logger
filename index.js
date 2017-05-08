@@ -5,6 +5,24 @@ var parseIRCMessage = require('irc-message').parse
 var dgram = require('dgram') // send and forget chat messages on local port
                              // for local processes that want to listen for live events
 
+var _sockets = []
+var server = net.createServer(function (socket) {
+	_sockets.push(socket)
+	console.log('client connected')
+	socket.on('data', function () {
+		socket.end()
+	})
+	socket.on('close', function () {
+		var i = _sockets.indexOf(socket)
+		_sockets.splice(i, 1)
+		console.log('client disconnected')
+	})
+})
+
+server.listen(40401, function () {
+	console.log('TCP server bound, port: ' + 40401)
+})
+
 function log () {
   if (process.env.SILENT || process.env.silent) return undefined
   var _args = arguments
@@ -56,6 +74,10 @@ function start (opts) {
                               .map(function (channel) {
                                 return channel.trim().toLowerCase()
                               })
+			      .filter(function (channel, index, arr) {
+				// filter out duplicates
+				return arr.indexOf(channel) === index
+			      })
 
           newChannels.forEach(function (channel) {
             var isActive = (
@@ -186,7 +208,7 @@ function start (opts) {
 
   var _listeners = {}
   function emit (evt, data) {
-    _listeners[evt] &&  _listeners[evt].forEach(function (callback) {
+    _listeners[evt] && _listeners[evt].forEach(function (callback) {
       callback(data)
     })
 
@@ -195,10 +217,26 @@ function start (opts) {
         evt: evt,
         data: data
       })
+      // _udpSocket && _udpSocket.send(packet, _udpPort, _udpAddress, function (err) {
       _udpSocket && _udpSocket.send(packet, _udpPort, _udpAddress, function (err) {
         if (err) throw err
         log(' >> >> udp packet sent of size: ' + packet.length)
       })
+
+	;(function () {
+		try {
+			var p = JSON.parse(packet)
+			var doc = p.data
+			var msg = doc.channel + ' ' + doc.user + ': ' + doc.message
+
+			doc.channel && doc.message && _sockets.forEach(function (socket) {
+				socket.write(msg + '\r\n')
+			})
+		} catch (err) {
+			console.log('error sending TCP message')
+			console.log(err)
+		}
+	})()
     } catch (err) {
       throw err
     }
